@@ -46,7 +46,7 @@ button:hover{background:#eee}
 <div class="section">
 <h2>자동차 선택</h2>
 <div id="cars" class="grid"></div>
-<div id="money" style="margin-top:14px;font-weight:bold"></div>
+<div id="money" style="margin-top:14px;font-weight:bold"></div><div id="debt" style="margin-top:8px;font-weight:bold"></div>
 </div>
 
 <div class="section">
@@ -62,14 +62,14 @@ button:hover{background:#eee}
 <section id="game" class="screen">
 <div id="top">
 <div><b id="typeLabel">후진주차</b>　|　<b id="carLabel">모닝</b></div>
-<div>보유금액: <b id="moneyGame">0원</b>　<button id="finish">주차 완료</button></div>
+<div>보유금액: <b id="moneyGame">0원</b>　부채: <b id="debtGame">0원</b></div>
 </div>
 <canvas id="canvas"></canvas>
 </section>
 
 <div id="result">
 <div class="box">
-<h2>주차 결과</h2>
+<h2 id="resultTitle">주차 결과</h2>
 <div class="row"><span>주차 시간</span><b id="time">0.0초</b></div>
 <div class="row"><span>충돌 횟수</span><b id="collision">0</b></div>
 <div class="row"><span>주차 위치 오차</span><b id="posError">0</b></div>
@@ -93,6 +93,7 @@ const cars=[
 ];
 
 let money=Number(localStorage.getItem("parkingMoney")||0);
+let debt=Number(localStorage.getItem("parkingDebt")||0);
 let owned=JSON.parse(localStorage.getItem("parkingOwned")||'["morning"]');
 let selected="morning",canvas,ctx,W,H,game=null,raf;
 
@@ -101,7 +102,16 @@ const parkingTypes=["전면주차","후진주차","평행주차","직각주차"]
 function fmt(n){return Math.floor(n).toLocaleString("ko-KR")+"원"}
 function save(){
  localStorage.setItem("parkingMoney",money);
+ localStorage.setItem("parkingDebt",debt);
  localStorage.setItem("parkingOwned",JSON.stringify(owned));
+}
+function payDebt(){
+ if(debt>0 && money>0){
+   const pay=Math.min(money,debt);
+   money-=pay;
+   debt-=pay;
+   save();
+ }
 }
 function renderCars(){
  const box=document.getElementById("cars");box.innerHTML="";
@@ -118,7 +128,7 @@ function renderCars(){
   };
   box.appendChild(b);
  });
- document.getElementById("money").textContent="보유금액: "+fmt(money);
+ payDebt(); document.getElementById("money").textContent="보유금액: "+fmt(money); document.getElementById("debt").textContent="부채: "+fmt(debt);
 }
 renderCars();
 
@@ -127,7 +137,6 @@ document.getElementById("start").onclick=()=>{
  document.getElementById("game").classList.add("active");
  startGame();
 };
-document.getElementById("finish").onclick=finish;
 document.getElementById("back").onclick=()=>{
  document.getElementById("result").style.display="none";
  document.getElementById("game").classList.remove("active");
@@ -164,7 +173,7 @@ function startGame(){
 
  document.getElementById("typeLabel").textContent=type;
  document.getElementById("carLabel").textContent=c.name;
- document.getElementById("moneyGame").textContent=fmt(money);
+ payDebt(); document.getElementById("moneyGame").textContent=fmt(money); document.getElementById("debtGame").textContent=fmt(debt);
 
  cancelAnimationFrame(raf);
  loop();
@@ -191,6 +200,56 @@ function update(){
  if(game.x>area.r-hw){game.x=area.r-hw;game.collision++}
  if(game.y<hh+area.t){game.y=hh+area.t;game.collision++}
  if(game.y>area.b-hh){game.y=area.b-hh;game.collision++}
+
+ // 기존 차량과 접촉하면 즉시 100원 벌금
+ const parkedCars=getParkedCars();
+ for(const p of parkedCars){
+   const dx=game.x-p.x, dy=game.y-p.y;
+   const dist=Math.hypot(dx,dy);
+   const limit=(Math.max(game.car.w,game.car.h)+Math.max(p.w,p.h))*0.32;
+   if(dist<limit){
+     game.collision++;
+     game.hitPenalty=true;
+     game.speed=0;
+     finish("collision");
+     return;
+   }
+ }
+
+ // 주차 칸 안에 차량이 들어오고 거의 정지하면 자동 종료
+ const slot=getSlot();
+ if(slot){
+   const inside=
+     Math.abs(game.x-slot.x)<slot.w*.36 &&
+     Math.abs(game.y-slot.y)<slot.h*.36;
+   const angleDeg=Math.abs((((game.angle*180/Math.PI)+180)%180)-0);
+   const aligned=Math.min(angleDeg,180-angleDeg)<15;
+   if(inside && Math.abs(game.speed)<0.25 && aligned){
+     finish("parked");
+   }
+ }
+}
+function getSlot(){
+ const cx=W*.5;
+ if(game.type==="평행주차") return {x:W*.52,y:H*.5,w:145,h:65};
+ if(game.type==="전면주차") return {x:cx,y:H*.42,w:78,h:125};
+ if(game.type==="직각주차") return {x:cx,y:H*.48,w:82,h:125};
+ return {x:cx,y:H*.55,w:75,h:125};
+}
+function getParkedCars(){
+ const cx=W*.5, py=H*.5;
+ if(game.type==="평행주차") return [
+   {x:W*.30,y:py,w:125,h:52},{x:W*.74,y:py,w:125,h:52}
+ ];
+ if(game.type==="전면주차") return [
+   {x:cx-115,y:H*.42,w:48,h:95},{x:cx+115,y:H*.42,w:48,h:95}
+ ];
+ if(game.type==="직각주차") return [
+   {x:cx-125,y:H*.48,w:50,h:100},{x:cx+125,y:H*.48,w:50,h:100}
+ ];
+ return [
+   {x:cx-115,y:H*.55,w:48,h:95},{x:cx+115,y:H*.55,w:48,h:95}
+ ];
 }
 
 function draw(){
@@ -282,24 +341,32 @@ function round(x,y,w,h,r){
  ctx.arcTo(x,y,x+w,y,r);ctx.closePath();
 }
 
-function finish(){
+function finish(reason){
  if(!game)return;
  const c=game.car;
  const seconds=(performance.now()-game.started)/1000;
- const centerX=W/2,centerY=H*.55;
- const posError=Math.round(Math.hypot(game.x-centerX,game.y-centerY));
- const angleError=Math.round(Math.abs((game.angle*180/Math.PI)%360));
- const accuracy=Math.max(0,Math.min(100,100-posError*.25-angleError*.35-game.collision*10));
- const reward=Math.max(30,Math.round(c.reward*(accuracy/100)));
+ const slot=getSlot();
+ const posError=Math.round(Math.hypot(game.x-slot.x,game.y-slot.y));
+ const angleError=Math.round(Math.abs((game.angle*180/Math.PI)%180));
+ let accuracy=Math.max(0,Math.min(100,100-posError*.25-angleError*.35-game.collision*10));
 
- money+=reward;save();
+ if(reason==="collision"){
+   // 충돌 벌금 100원, 돈이 없으면 부채로 기록
+   if(money>=100) money-=100;
+   else debt+=100-money, money=0;
+   accuracy=0;
+ }
+
+ const reward=Math.max(30,Math.round(c.reward*(accuracy/100)));
+ if(reason==="parked") money+=reward;
+ save();
 
  document.getElementById("time").textContent=seconds.toFixed(1)+"초";
  document.getElementById("collision").textContent=game.collision;
  document.getElementById("posError").textContent=posError+"px";
  document.getElementById("angleError").textContent=angleError+"°";
  document.getElementById("accuracy").textContent=Math.round(accuracy)+"%";
- document.getElementById("earn").textContent=fmt(reward);
+ document.getElementById("earn").textContent=reason==="collision"?"-100원":fmt(reward);
 
  document.getElementById("result").style.display="flex";
  cancelAnimationFrame(raf);game=null;
